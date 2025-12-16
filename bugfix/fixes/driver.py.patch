@@ -1,0 +1,66 @@
+--- a/nova/virt/libvirt/driver.py
++++ b/nova/virt/libvirt/driver.py
+@@ -1234,17 +1234,45 @@ class LibvirtDriver(driver.ComputeDriver):
+         # ... existing code ...
+         return something
+
+-    def _get_scsi_controller_model(self, image_meta):
+-        """Get SCSI controller model from image metadata.
++    def _get_scsi_controller_model(self, image_meta, flavor):
++        """Get SCSI controller model from image metadata or flavor extra specs.
++
++        This function implements a priority-based configuration lookup:
++        1. Image metadata (highest priority - for image-backed instances)
++        2. Flavor extra specs (fallback - for volume-backed instances)
++        3. Hardcoded default (last resort)
++
++        Fix for Bug #2112373: Ensure flavor extra specs are honored when
++        booting from volumes without image metadata.
+
+         Args:
+-            image_meta: ImageMeta object containing image properties
++            image_meta: ImageMeta object containing image properties (may be None)
++            flavor: Flavor object containing extra_specs dict
+
+         Returns:
+             str: SCSI controller model (e.g., 'virtio-scsi', 'lsilogic')
++
++        Raises:
++            None - always returns a valid model (falls back to default)
+         """
+-        # Check image metadata for hw_scsi_model
++        # Priority 1: Check image metadata (existing behavior, preserved)
+         if image_meta and image_meta.properties:
+             hw_scsi_model = image_meta.properties.get('hw_scsi_model')
+             if hw_scsi_model:
++                LOG.debug("Using SCSI controller model from image metadata: %s",
++                         hw_scsi_model)
+                 return hw_scsi_model
+
+-        # Fall back to default
+-        return 'lsilogic'
++        # Priority 2: Check flavor extra specs (NEW - Bug #2112373 fix)
++        if flavor and flavor.extra_specs:
++            # Note: Flavor extra specs use 'hw:scsi_model' (colon)
++            # while image metadata uses 'hw_scsi_model' (underscore)
++            hw_scsi_model = flavor.extra_specs.get('hw:scsi_model')
++            if hw_scsi_model:
++                LOG.debug("Using SCSI controller model from flavor extra specs: %s",
++                         hw_scsi_model)
++                return hw_scsi_model
++
++        # Priority 3: Fall back to hardcoded default (existing behavior)
++        default_model = 'lsilogic'
++        LOG.debug("No SCSI controller model specified in image or flavor, "
++                 "using default: %s", default_model)
++        return default_model
+
+@@ -3456,7 +3484,7 @@ class LibvirtDriver(driver.ComputeDriver):
+         # ... existing code ...
+
+         # Get SCSI controller model
+-        scsi_model = self._get_scsi_controller_model(image_meta)
++        scsi_model = self._get_scsi_controller_model(image_meta, flavor)
+
+         # Configure SCSI controller if needed
+         if uses_scsi_bus:

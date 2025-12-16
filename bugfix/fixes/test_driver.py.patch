@@ -1,0 +1,140 @@
+--- a/nova/tests/unit/virt/libvirt/test_driver.py
++++ b/nova/tests/unit/virt/libvirt/test_driver.py
+@@ -9876,6 +9876,98 @@ class LibvirtDriverTestCase(test.NoDBTestCase):
+         # ... existing test code ...
+
+
++class TestSCSIControllerModel(test.NoDBTestCase):
++    """Test cases for SCSI controller model configuration.
++
++    These tests verify the fix for Bug #2112373: Flavor Extra Specs for
++    SCSI Controller Model Not Honored for Volume Boot.
++    """
++
++    def setUp(self):
++        super(TestSCSIControllerModel, self).setUp()
++        self.driver = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), True)
++
++    def test_scsi_model_from_image_metadata(self):
++        """Test SCSI model retrieval from image metadata (existing behavior).
++
++        This test ensures that image metadata is still the primary source
++        for SCSI controller model configuration.
++        """
++        image_meta = objects.ImageMeta.from_dict({
++            'properties': {'hw_scsi_model': 'virtio-scsi'}
++        })
++        flavor = objects.Flavor(extra_specs={})
++
++        model = self.driver._get_scsi_controller_model(image_meta, flavor)
++
++        self.assertEqual('virtio-scsi', model)
++
++    def test_scsi_model_from_flavor_extra_specs(self):
++        """Test SCSI model fallback to flavor extra specs (Bug #2112373 fix).
++
++        This is the primary test case for the bug fix. When booting from
++        volume without image metadata, the SCSI controller model should
++        be retrieved from the flavor's extra_specs.
++        """
++        image_meta = None  # Volume boot without image metadata
++        flavor = objects.Flavor(extra_specs={'hw:scsi_model': 'virtio-scsi'})
++
++        model = self.driver._get_scsi_controller_model(image_meta, flavor)
++
++        self.assertEqual('virtio-scsi', model)
++
++    def test_scsi_model_priority_image_over_flavor(self):
++        """Test that image metadata takes priority over flavor extra specs.
++
++        When both image metadata and flavor extra specs specify a SCSI
++        controller model, the image metadata should take precedence to
++        maintain backward compatibility.
++        """
++        image_meta = objects.ImageMeta.from_dict({
++            'properties': {'hw_scsi_model': 'lsisas1068'}
++        })
++        flavor = objects.Flavor(extra_specs={'hw:scsi_model': 'virtio-scsi'})
++
++        model = self.driver._get_scsi_controller_model(image_meta, flavor)
++
++        # Image metadata should win
++        self.assertEqual('lsisas1068', model)
++
++    def test_scsi_model_default_fallback(self):
++        """Test fallback to default when neither image nor flavor specify model.
++
++        When no configuration is provided, the function should fall back
++        to the hardcoded default ('lsilogic').
++        """
++        image_meta = None
++        flavor = objects.Flavor(extra_specs={})
++
++        model = self.driver._get_scsi_controller_model(image_meta, flavor)
++
++        self.assertEqual('lsilogic', model)
++
++    def test_scsi_model_empty_image_meta_uses_flavor(self):
++        """Test flavor is used when image metadata exists but is empty.
++
++        Edge case: ImageMeta object exists but doesn't contain hw_scsi_model.
++        Should fall back to flavor extra specs.
++        """
++        image_meta = objects.ImageMeta.from_dict({'properties': {}})
++        flavor = objects.Flavor(extra_specs={'hw:scsi_model': 'virtio-scsi'})
++
++        model = self.driver._get_scsi_controller_model(image_meta, flavor)
++
++        self.assertEqual('virtio-scsi', model)
++
++    def test_scsi_model_flavor_different_models(self):
++        """Test various SCSI models from flavor extra specs.
++
++        Verify that different SCSI controller models can be configured
++        via flavor extra specs.
++        """
++        test_cases = [
++            'virtio-scsi',
++            'lsilogic',
++            'lsisas1068',
++            'lsisas1078',
++            'vmpvscsi',
++        ]
++
++        for expected_model in test_cases:
++            flavor = objects.Flavor(
++                extra_specs={'hw:scsi_model': expected_model}
++            )
++            model = self.driver._get_scsi_controller_model(None, flavor)
++            self.assertEqual(expected_model, model,
++                           "Failed for model: %s" % expected_model)
++
++    def test_scsi_model_none_flavor(self):
++        """Test handling of None flavor parameter.
++
++        Edge case: flavor is None (should fall back to default).
++        """
++        image_meta = None
++        flavor = None
++
++        model = self.driver._get_scsi_controller_model(image_meta, flavor)
++
++        self.assertEqual('lsilogic', model)
++
++    def test_scsi_model_flavor_no_extra_specs(self):
++        """Test handling of flavor without extra_specs attribute.
++
++        Edge case: flavor object doesn't have extra_specs (should fall
++        back to default without raising AttributeError).
++        """
++        image_meta = None
++        flavor = mock.Mock(spec=[])  # Flavor without extra_specs
++
++        model = self.driver._get_scsi_controller_model(image_meta, flavor)
++
++        self.assertEqual('lsilogic', model)
++
++
+ class HostStateTestCase(test.NoDBTestCase):
+     def setUp(self):
+         super(HostStateTestCase, self).setUp()

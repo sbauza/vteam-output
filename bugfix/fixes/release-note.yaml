@@ -1,0 +1,62 @@
+# Release note for Bug #2112373 fix
+# Place this file in: releasenotes/notes/
+# Filename: bug-2112373-flavor-scsi-model-volume-boot-<random-hash>.yaml
+
+---
+features:
+  - |
+    The libvirt driver now honors the ``hw:scsi_model`` flavor extra spec
+    when booting instances from volumes without image metadata.
+
+    Previously, when booting instances from Cinder volumes that did not
+    contain Glance image metadata, Nova would ignore the ``hw:scsi_model``
+    flavor extra spec and default to ``lsilogic`` for the SCSI controller
+    model. This made it impossible for operators to enforce consistent
+    storage controller standards for volume-backed instances via flavors.
+
+    With this enhancement, the SCSI controller model configuration now
+    follows this priority order:
+
+    1. Image metadata (``hw_scsi_model`` property) - highest priority
+    2. Flavor extra specs (``hw:scsi_model``) - fallback for volume boot
+    3. Hardcoded default (``lsilogic``) - last resort
+
+    This allows operators to use flavor extra specs to standardize on
+    high-performance SCSI controllers like ``virtio-scsi`` for all
+    instance types, regardless of whether they boot from images or volumes.
+
+    Example flavor configuration::
+
+        openstack flavor set <flavor> \
+          --property hw:scsi_model=virtio-scsi \
+          --property hw:disk_bus=scsi
+
+    The fix maintains full backward compatibility:
+
+    - Image-backed instances: No change (image metadata still takes priority)
+    - Volume boot with image metadata: No change (metadata still used)
+    - Volume boot without metadata: Now checks flavor extra specs (new)
+
+fixes:
+  - |
+    [`bug 2112373 <https://bugs.launchpad.net/nova/+bug/2112373>`_]
+    Fixed an issue where the libvirt driver ignored the ``hw:scsi_model``
+    flavor extra spec when booting instances from volumes without image
+    metadata. The SCSI controller model is now correctly retrieved from
+    flavor extra specs when image metadata is unavailable, enabling
+    consistent configuration across all boot types.
+
+upgrade:
+  - |
+    The fix for `bug 2112373`_ adds flavor extra spec fallback for SCSI
+    controller model configuration in the libvirt driver. This is a
+    backward-compatible enhancement that does not require any configuration
+    changes or migrations.
+
+    Existing instances are not affected. Only new instances (or rebuilt
+    instances) booted after the upgrade will use the new configuration
+    logic.
+
+    Operators who wish to standardize on a specific SCSI controller model
+    for volume-backed instances can now add the ``hw:scsi_model`` extra
+    spec to their flavors.
